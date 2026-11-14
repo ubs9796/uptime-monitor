@@ -1,0 +1,14 @@
+[
+  {
+    "client_name": "Miyapur Salon",
+    "url": "https://greentrends-kothapet.salon4u.in/",
+    "http_code": [
+      true,
+      200
+    ],
+    "ssl_days": 85,
+    "audited_at": "2026-11-14",
+    "trial_expires": "2026-11-24",
+    "active": false
+  }
+]
