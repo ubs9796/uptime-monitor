@@ -17,7 +17,7 @@ def connect_db(db_path: str = "uptime.db") -> sqlite3.Connection:
 
 
 def init_db(conn: sqlite3.Connection) -> None:
-    """Create monitored_sites table if it does not exist."""
+    """Create the state and check-history tables if they do not exist."""
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS monitored_sites (
@@ -31,6 +31,22 @@ def init_db(conn: sqlite3.Connection) -> None:
             updated_at TEXT NOT NULL
         );
         """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS checks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            site_id INTEGER NOT NULL,
+            is_up INTEGER NOT NULL,
+            status_code INTEGER,
+            ssl_days INTEGER,
+            checked_at TEXT NOT NULL,
+            FOREIGN KEY (site_id) REFERENCES monitored_sites (id) ON DELETE CASCADE
+        );
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_checks_site_id ON checks (site_id, id);"
     )
     conn.commit()
 
@@ -52,6 +68,19 @@ def add_site(conn: sqlite3.Connection, client_name: str, url: str) -> int:
     return int(cur.lastrowid)
 
 
+def remove_site(conn: sqlite3.Connection, url: str) -> bool:
+    """Delete a monitored site and its history. Returns True if a row was removed."""
+    clean_url = validate_url(url)
+    row = conn.execute(
+        "SELECT id FROM monitored_sites WHERE url = ?;", (clean_url,)
+    ).fetchone()
+    if row is None:
+        return False
+    conn.execute("DELETE FROM monitored_sites WHERE id = ?;", (row["id"],))
+    conn.commit()
+    return True
+
+
 def list_sites(conn: sqlite3.Connection) -> list[dict]:
     """Return all monitored sites as plain dicts."""
     rows = conn.execute("SELECT * FROM monitored_sites ORDER BY id ASC;").fetchall()
@@ -66,7 +95,11 @@ def update_site_state(
     ssl_days: Optional[int],
     ssl_alert_sent: bool,
 ) -> bool:
-    """Write to disk only when state changes to protect Pi 3B SD card."""
+    """Record a check in history and update state only when it changes.
+
+    The current-state row is written only on transitions to protect the Pi 3B
+    SD card, while every check is appended to the ``checks`` history table.
+    """
     row = conn.execute(
         "SELECT last_is_up, last_status_code, ssl_alert_sent FROM monitored_sites WHERE id = ?;",
         (site_id,),
@@ -81,17 +114,23 @@ def update_site_state(
         or row["last_status_code"] != status_code
         or row["ssl_alert_sent"] != new_ssl_alert
     )
-    if not changed:
-        return False
 
     now = datetime.now(timezone.utc).isoformat()
     conn.execute(
         """
-        UPDATE monitored_sites
-        SET last_is_up = ?, last_status_code = ?, last_ssl_days = ?, ssl_alert_sent = ?, updated_at = ?
-        WHERE id = ?;
+        INSERT INTO checks (site_id, is_up, status_code, ssl_days, checked_at)
+        VALUES (?, ?, ?, ?, ?);
         """,
-        (new_up, status_code, ssl_days, new_ssl_alert, now, site_id),
+        (site_id, new_up, status_code, ssl_days, now),
     )
+    if changed:
+        conn.execute(
+            """
+            UPDATE monitored_sites
+            SET last_is_up = ?, last_status_code = ?, last_ssl_days = ?, ssl_alert_sent = ?, updated_at = ?
+            WHERE id = ?;
+            """,
+            (new_up, status_code, ssl_days, new_ssl_alert, now, site_id),
+        )
     conn.commit()
-    return True
+    return changed
