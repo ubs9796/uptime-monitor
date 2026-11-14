@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -10,6 +11,7 @@ from storage import (
     connect_db,
     init_db,
     list_sites,
+    prune_check_history,
     remove_site,
     update_site_state,
 )
@@ -134,3 +136,49 @@ def test_send_telegram_alert_returns_false_without_env(monkeypatch) -> None:
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
     assert send_telegram_alert("No creds") is False
+
+
+def _insert_check(conn: sqlite3.Connection, site_id: int, checked_at: str) -> None:
+    conn.execute(
+        "INSERT INTO checks (site_id, is_up, status_code, ssl_days, checked_at) "
+        "VALUES (?, ?, ?, ?, ?);",
+        (site_id, 1, 200, 30, checked_at),
+    )
+    conn.commit()
+
+
+def test_prune_check_history_keeps_exact_cutoff_and_newer_rows(db_conn) -> None:
+    site_id = add_site(db_conn, "Client A", "https://example.com")
+    now = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
+    older = (now - timedelta(days=31)).isoformat()
+    cutoff = (now - timedelta(days=10)).isoformat()
+    newer = (now - timedelta(days=9, hours=23)).isoformat()
+    _insert_check(db_conn, site_id, older)
+    _insert_check(db_conn, site_id, cutoff)
+    _insert_check(db_conn, site_id, newer)
+
+    deleted = prune_check_history(db_conn, 10, now=now)
+
+    assert deleted == 1
+    remaining = db_conn.execute(
+        "SELECT checked_at FROM checks WHERE site_id = ? ORDER BY checked_at;", (site_id,)
+    ).fetchall()
+    assert [row["checked_at"] for row in remaining] == [cutoff, newer]
+
+
+def test_prune_check_history_empty_table_returns_zero(db_conn) -> None:
+    assert prune_check_history(db_conn, 30) == 0
+
+
+@pytest.mark.parametrize("days", [0, -1, True, 1.5, "10"])
+def test_prune_check_history_rejects_invalid_days(db_conn, days: object) -> None:
+    with pytest.raises(ValueError):
+        prune_check_history(db_conn, days)
+
+
+def test_init_db_creates_checked_at_index(db_conn) -> None:
+    indexes = {
+        row["name"]
+        for row in db_conn.execute("PRAGMA index_list('checks');").fetchall()
+    }
+    assert "idx_checks_checked_at" in indexes

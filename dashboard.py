@@ -2,7 +2,7 @@ import hmac
 import html
 import ipaddress
 import os
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 
 from storage import connect_db, init_db, list_sites
 
@@ -57,6 +57,13 @@ th {{ background: #f3f4f6; }}
 </table>
 </body>
 </html>"""
+
+
+class DashboardServer(ThreadingHTTPServer):
+    """Threaded server so slow clients cannot block unrelated dashboard reads."""
+
+    daemon_threads = True
+    allow_reuse_address = True
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
@@ -135,21 +142,33 @@ def _is_loopback(host: str) -> bool:
         return False
 
 
+def validate_port(port: int | str) -> int:
+    """Return a valid TCP port number or raise ValueError."""
+    if isinstance(port, bool):
+        raise ValueError(f"Invalid port: {port}")
+    try:
+        value = int(port)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid port: {port}") from exc
+    if not (1 <= value <= 65535):
+        raise ValueError(f"Invalid port: {port}")
+    return value
+
+
 def run_server(
     host: str = "127.0.0.1",
-    port: int = 8080,
+    port: int | str = 8080,
     db_path: str = "uptime.db",
     token: str | None = None,
 ) -> None:
     """Start the HTTP server. Non-loopback binds require a bearer token."""
-    if not (1 <= int(port) <= 65535):
-        raise ValueError(f"Invalid port: {port}")
+    valid_port = validate_port(port)
     if not token and not _is_loopback(host):
         raise ValueError("UPTIME_DASHBOARD_TOKEN is required for non-loopback binds.")
     DashboardHandler.db_path = db_path
     DashboardHandler.token = token or None
-    server = HTTPServer((host, int(port)), DashboardHandler)
-    print(f"Serving dashboard on http://{host}:{port} (DB: {db_path})")
+    server = DashboardServer((host, valid_port), DashboardHandler)
+    print(f"Serving dashboard on http://{host}:{valid_port} (DB: {db_path})")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -161,6 +180,6 @@ def run_server(
 if __name__ == "__main__":
     db = os.environ.get("UPTIME_DB_PATH", "uptime.db")
     host = os.environ.get("UPTIME_HOST", "127.0.0.1")
-    port = int(os.environ.get("UPTIME_PORT", "8080"))
+    port = os.environ.get("UPTIME_PORT", "8080")
     token = os.environ.get("UPTIME_DASHBOARD_TOKEN") or None
     run_server(host=host, port=port, db_path=db, token=token)

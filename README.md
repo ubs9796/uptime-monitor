@@ -12,7 +12,7 @@ Small hosting clients need to know when a site goes down or a certificate is abo
 
 | File | Purpose |
 |---|---|
-| `runner.py` | CLI (`add`, `remove`, `check`, `list`) and the check cycle |
+| `runner.py` | CLI (`add`, `remove`, `check`, `list`, `prune`) and the check cycle |
 | `checker.py` | URL validation, HTTP status, TLS expiry, connectivity probe |
 | `storage.py` | SQLite schema, current state, and check history |
 | `notifier.py` | Alert formatting and Telegram/webhook delivery |
@@ -35,6 +35,7 @@ Requires Python 3.10+.
     python3 runner.py add "Example" "https://example.com"
     python3 runner.py check
     python3 runner.py list
+    python3 runner.py prune --days 90     # optional: delete history older than 90 days
 
 Dashboard:
 
@@ -48,6 +49,7 @@ Set `UPTIME_HOST=0.0.0.0` only with `UPTIME_DASHBOARD_TOKEN` set and a TLS rever
 | `ALERT_WEBHOOK_URL` | Optional | HTTPS fallback receiving `{"text": "..."}` |
 | `UPTIME_DASHBOARD_TOKEN` | Non-loopback bind | Bearer token for the dashboard |
 | `UPTIME_HOST`, `UPTIME_PORT`, `UPTIME_DB_PATH` | Optional | Dashboard bind and database path |
+| `UPTIME_CHECK_WORKERS` | Optional | Concurrent check workers, 1-32 (default `4`) |
 
 Secrets come from the environment only; never commit them.
 
@@ -58,16 +60,21 @@ Secrets come from the environment only; never commit them.
 - TLS expiry is checked only for `https://` URLs, on port 443.
 - Alerts fire when a site flips up/down, its HTTP code changes, or the SSL-warning state changes. Repeated identical checks do not alert.
 - Every check is appended to the `checks` history table; the current-state row is written only on transitions.
+- History is never pruned automatically. Run `python3 runner.py prune --days N` to delete rows strictly older than `N` days; rows exactly at the cutoff are kept. Pruning is permanent, and the database file may not shrink until SQLite reuses the freed pages.
 - Deleting a site cascades its history, and SQLite `secure_delete` overwrites freed rows.
 - Telegram is tried first; the HTTPS webhook is the fallback.
+- HTTP and TLS checks run through a bounded thread pool: `--workers` or `UPTIME_CHECK_WORKERS`, default `4`, maximum `32`. Database writes and alerts stay sequential in site order, so state and alert behaviour are unchanged.
+- The dashboard uses a threaded HTTP server so one slow request does not block others. Each request still opens its own SQLite connection; authentication and response headers are unchanged.
 - The dashboard escapes dynamic values and sends CSP, frame, referrer, and no-store headers.
 
 ## Limitations
 
 - The dashboard speaks plain HTTP. A non-loopback bind needs a TLS reverse proxy, or the bearer token travels in clear text.
-- No rate limiting, user accounts, or brute-force protection on the dashboard.
+- No rate limiting, user accounts, or brute-force protection on the dashboard. Threading improves responsiveness, not abuse resistance.
 - Telegram and webhooks only; no email or SMS.
 - Single-process SQLite; not designed for high write concurrency.
+- Bounded check concurrency shortens cycles, but the slowest site in each batch still bounds that batch. Raise workers cautiously on a Pi 3B.
+- Check history grows until an operator runs `prune`; schedule it deliberately if retention matters. There is no automatic retention policy.
 - GitHub Actions state is cache-based and best-effort; a cache miss resets history.
 - The connectivity probe depends on `1.1.1.1`; networks that block it skip every cycle.
 - No encryption at rest; use full-disk encryption on the host.
@@ -77,7 +84,7 @@ Secrets come from the environment only; never commit them.
 
     pytest -v
 
-The suite covers URL validation, HTTP errors and timeouts, SSL expiry boundaries, storage transitions and history, notifier environment isolation, and dashboard XSS, auth, and headers.
+The suite covers URL validation, HTTP errors and timeouts, SSL expiry boundaries, storage transitions and history, pruning cutoffs and invalid retention values, worker-count boundaries and concurrent/network-failure check cycles, notifier environment isolation, and dashboard XSS, auth, headers, port validation, and concurrent requests.
 
 ## License
 

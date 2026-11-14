@@ -6,10 +6,11 @@ import pytest
 
 from dashboard import (
     DashboardHandler,
-    HTTPServer,
+    DashboardServer,
     _is_loopback,
     render_dashboard_html,
     run_server,
+    validate_port,
 )
 from storage import add_site, connect_db, init_db, update_site_state
 
@@ -47,7 +48,7 @@ def test_dashboard_http_routes(tmp_path) -> None:
     conn.close()
 
     DashboardHandler.db_path = db_file
-    server = HTTPServer(("127.0.0.1", 0), DashboardHandler)
+    server = DashboardServer(("127.0.0.1", 0), DashboardHandler)
     port = server.server_port
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -82,7 +83,7 @@ def test_dashboard_requires_bearer_token(tmp_path) -> None:
 
     DashboardHandler.db_path = db_file
     DashboardHandler.token = "s3cret-token"
-    server = HTTPServer(("127.0.0.1", 0), DashboardHandler)
+    server = DashboardServer(("127.0.0.1", 0), DashboardHandler)
     port = server.server_port
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -130,3 +131,59 @@ def test_is_loopback_detection() -> None:
     assert _is_loopback("localhost")
     assert not _is_loopback("0.0.0.0")
     assert not _is_loopback("example.com")
+
+
+def test_dashboard_server_handles_requests_concurrently(tmp_path, monkeypatch) -> None:
+    db_file = str(tmp_path / "threaded.db")
+    conn = connect_db(db_file)
+    init_db(conn)
+    conn.close()
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_list_sites(_conn) -> list[dict]:
+        started.set()
+        release.wait(timeout=2)
+        return []
+
+    monkeypatch.setattr("dashboard.list_sites", slow_list_sites)
+    DashboardHandler.db_path = db_file
+    DashboardHandler.token = None
+    server = DashboardServer(("127.0.0.1", 0), DashboardHandler)
+    port = server.server_port
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+
+    slow_request = threading.Thread(
+        target=lambda: urllib.request.urlopen(f"{base}/", timeout=3).read(),
+        daemon=True,
+    )
+    slow_request.start()
+
+    try:
+        assert started.wait(timeout=2)
+        with urllib.request.urlopen(f"{base}/health", timeout=1) as resp:
+            assert resp.getcode() == 200
+            assert resp.read().decode("utf-8") == "OK"
+    finally:
+        release.set()
+        slow_request.join(timeout=2)
+        server.shutdown()
+        server.server_close()
+
+
+def test_dashboard_server_uses_daemon_threads() -> None:
+    assert DashboardServer.daemon_threads is True
+
+
+@pytest.mark.parametrize("port", [0, 70000, -1, "not-a-port", True])
+def test_validate_port_rejects_invalid_values(port: object) -> None:
+    with pytest.raises(ValueError):
+        validate_port(port)
+
+
+def test_validate_port_accepts_boundaries() -> None:
+    assert validate_port(1) == 1
+    assert validate_port("65535") == 65535

@@ -1,5 +1,5 @@
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -48,6 +48,9 @@ def init_db(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_checks_site_id ON checks (site_id, id);"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_checks_checked_at ON checks (checked_at);"
     )
     conn.commit()
 
@@ -135,3 +138,21 @@ def update_site_state(
         )
     conn.commit()
     return changed
+
+
+def prune_check_history(
+    conn: sqlite3.Connection,
+    days: int,
+    now: datetime | None = None,
+) -> int:
+    """Delete history rows strictly older than ``days`` and return the count.
+
+    Rows exactly at the cutoff are kept. Callers must opt in explicitly; no
+    automatic retention runs during a normal check cycle.
+    """
+    if isinstance(days, bool) or not isinstance(days, int) or days < 1:
+        raise ValueError("days must be an integer greater than or equal to 1.")
+    cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=days)
+    cur = conn.execute("DELETE FROM checks WHERE checked_at < ?;", (cutoff.isoformat(),))
+    conn.commit()
+    return int(cur.rowcount)
