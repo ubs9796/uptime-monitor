@@ -41,7 +41,7 @@ def main() -> None:
 
     host = url.split("//", 1)[1].split("/", 1)[0].split(":", 1)[0]
     try:
-        http_code = check_http_status(url)
+        _, http_code = check_http_status(url)
     except Exception:
         http_code = 0
     try:
