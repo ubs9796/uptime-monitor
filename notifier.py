@@ -3,7 +3,7 @@ import os
 import urllib.error
 import urllib.request
 
-from checker import validate_url
+from checker import validate_https_url
 
 
 def format_alert_message(
@@ -61,7 +61,10 @@ def send_webhook_alert(message: str, webhook_url: str | None = None, timeout_sec
     target = webhook_url or os.environ.get("ALERT_WEBHOOK_URL", "")
     if not target.strip():
         return False
-    clean_url = validate_url(target)
+    try:
+        clean_url = validate_https_url(target)
+    except ValueError:
+        return False
     payload = json.dumps({"text": message}).encode("utf-8")
     req = urllib.request.Request(
         clean_url,

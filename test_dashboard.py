@@ -4,7 +4,13 @@ import urllib.request
 
 import pytest
 
-from dashboard import DashboardHandler, HTTPServer, render_dashboard_html, run_server
+from dashboard import (
+    DashboardHandler,
+    HTTPServer,
+    _is_loopback,
+    render_dashboard_html,
+    run_server,
+)
 from storage import add_site, connect_db, init_db, update_site_state
 
 
@@ -52,6 +58,8 @@ def test_dashboard_http_routes(tmp_path) -> None:
             assert resp.getcode() == 200
             assert "Miyapur Dental" in body
             assert "60 days" in body
+            assert resp.headers["Cache-Control"] == "no-store"
+            assert "default-src 'none'" in resp.headers["Content-Security-Policy"]
 
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/health") as resp:
             assert resp.getcode() == 200
@@ -65,6 +73,60 @@ def test_dashboard_http_routes(tmp_path) -> None:
         server.server_close()
 
 
+def test_dashboard_requires_bearer_token(tmp_path) -> None:
+    db_file = str(tmp_path / "auth.db")
+    conn = connect_db(db_file)
+    init_db(conn)
+    add_site(conn, "Auth Clinic", "https://auth.example.in")
+    conn.close()
+
+    DashboardHandler.db_path = db_file
+    DashboardHandler.token = "s3cret-token"
+    server = HTTPServer(("127.0.0.1", 0), DashboardHandler)
+    port = server.server_port
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+
+    try:
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            urllib.request.urlopen(f"{base}/")
+        assert exc_info.value.code == 401
+
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            urllib.request.urlopen(
+                urllib.request.Request(f"{base}/", headers={"Authorization": "Bearer wrong"})
+            )
+        assert exc_info.value.code == 401
+
+        allowed = urllib.request.Request(
+            f"{base}/", headers={"Authorization": "Bearer s3cret-token"}
+        )
+        with urllib.request.urlopen(allowed) as resp:
+            assert resp.getcode() == 200
+            assert "Auth Clinic" in resp.read().decode("utf-8")
+
+        with urllib.request.urlopen(f"{base}/health") as resp:
+            assert resp.getcode() == 200
+    finally:
+        DashboardHandler.token = None
+        server.shutdown()
+        server.server_close()
+
+
 def test_run_server_rejects_invalid_port() -> None:
     with pytest.raises(ValueError):
         run_server(port=70000)
+
+
+def test_run_server_requires_token_for_non_loopback() -> None:
+    with pytest.raises(ValueError):
+        run_server(host="0.0.0.0", port=8080)
+
+
+def test_is_loopback_detection() -> None:
+    assert _is_loopback("127.0.0.1")
+    assert _is_loopback("::1")
+    assert _is_loopback("localhost")
+    assert not _is_loopback("0.0.0.0")
+    assert not _is_loopback("example.com")

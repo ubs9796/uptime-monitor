@@ -5,7 +5,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from checker import check_http_status, get_ssl_days_left, is_internet_online, validate_url
+from checker import (
+    check_http_status,
+    get_ssl_days_left,
+    is_internet_online,
+    validate_https_url,
+    validate_url,
+)
 
 
 def test_validate_url_happy_path() -> None:
@@ -17,6 +23,17 @@ def test_validate_url_rejects_bad_scheme() -> None:
         validate_url("ftp://example.com")
     with pytest.raises(ValueError):
         validate_url("not-a-url")
+
+
+def test_validate_url_rejects_embedded_credentials() -> None:
+    with pytest.raises(ValueError):
+        validate_url("https://user:pass@example.com")
+
+
+def test_validate_https_url_requires_https() -> None:
+    assert validate_https_url("https://hooks.example.com/notify") == "https://hooks.example.com/notify"
+    with pytest.raises(ValueError):
+        validate_https_url("http://hooks.example.com/notify")
 
 
 def test_check_http_status_200_ok() -> None:

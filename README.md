@@ -11,9 +11,10 @@ A zero-dependency Python 3 monitor for HTTP uptime and TLS certificate expiry. S
 
 ## Environment
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`: Telegram alerts.
-- `ALERT_WEBHOOK_URL`: fallback webhook that receives `{"text": "..."}`.
+- `ALERT_WEBHOOK_URL`: HTTPS fallback webhook that receives `{"text": "..."}`.
+- `UPTIME_DASHBOARD_TOKEN`: required if `UPTIME_HOST` is not loopback; send as `Authorization: Bearer`.
 
-Secrets are read from the environment only; never commit them. See `.env.example`.
+Secrets are read from the environment only; never commit them. See `.env.example` and `COMPLIANCE.md`.
 
 ## Commands
     python3 runner.py add "Name" "https://url"

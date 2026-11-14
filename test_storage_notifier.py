@@ -67,6 +67,10 @@ def test_update_site_state_records_every_check(db_conn) -> None:
     assert [row["status_code"] for row in rows] == [200, 503]
 
 
+def test_connection_uses_secure_delete(db_conn) -> None:
+    assert db_conn.execute("PRAGMA secure_delete;").fetchone()[0] == 1
+
+
 def test_remove_site_deletes_history(db_conn) -> None:
     site_id = add_site(db_conn, "Client A", "https://example.com")
     update_site_state(db_conn, site_id, True, 200, 45, False)
@@ -103,6 +107,13 @@ def test_send_webhook_alert_posts_json(monkeypatch) -> None:
 
     with patch("urllib.request.urlopen", return_value=mock_resp):
         assert send_webhook_alert("Site down") is True
+
+
+def test_send_webhook_alert_rejects_plain_http(monkeypatch) -> None:
+    monkeypatch.setenv("ALERT_WEBHOOK_URL", "http://hooks.example.com/notify")
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    assert send_webhook_alert("Site down") is False
 
 
 def test_send_telegram_alert_posts_json(monkeypatch) -> None:

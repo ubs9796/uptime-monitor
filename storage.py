@@ -7,12 +7,13 @@ from checker import validate_url
 
 
 def connect_db(db_path: str = "uptime.db") -> sqlite3.Connection:
-    """Open SQLite connection with WAL mode and foreign keys enabled."""
+    """Open SQLite with WAL, foreign keys, and secure deletion enabled."""
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
     conn.execute("PRAGMA foreign_keys=ON;")
+    conn.execute("PRAGMA secure_delete=ON;")
     return conn
 
 

@@ -13,7 +13,17 @@ def validate_url(url: str) -> str:
     parsed = urllib.parse.urlparse(url.strip())
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
         raise ValueError(f"Invalid HTTP/HTTPS URL: {url}")
+    if parsed.username or parsed.password:
+        raise ValueError("URL must not contain embedded credentials.")
     return url.strip()
+
+
+def validate_https_url(url: str) -> str:
+    """Validate an HTTPS-only URL for endpoints that receive alert data."""
+    clean_url = validate_url(url)
+    if urllib.parse.urlparse(clean_url).scheme != "https":
+        raise ValueError("URL must use https.")
+    return clean_url
 
 
 def check_http_status(url: str, timeout_sec: float = 5.0) -> tuple[bool, int]:

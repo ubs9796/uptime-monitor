@@ -1,4 +1,6 @@
+import hmac
 import html
+import ipaddress
 import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -58,9 +60,10 @@ th {{ background: #f3f4f6; }}
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
-    """Serve read-only status page on GET / and health check on GET /health."""
+    """Serve a read-only status page with optional bearer-token access control."""
 
     db_path: str = "uptime.db"
+    token: str | None = None
 
     def do_GET(self) -> None:
         if self.path == "/health":
@@ -68,6 +71,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if self.path != "/":
             self._send_response(404, "text/plain; charset=utf-8", "Not Found")
+            return
+        if self.token and not self._authorized():
+            self._send_response(
+                401,
+                "text/plain; charset=utf-8",
+                "Unauthorized",
+                {"WWW-Authenticate": 'Bearer realm="uptime"'},
+            )
             return
 
         conn = connect_db(self.db_path)
@@ -80,12 +91,33 @@ class DashboardHandler(BaseHTTPRequestHandler):
         page = render_dashboard_html(sites)
         self._send_response(200, "text/html; charset=utf-8", page)
 
-    def _send_response(self, code: int, content_type: str, body: str) -> None:
+    def _authorized(self) -> bool:
+        scheme, _, value = self.headers.get("Authorization", "").partition(" ")
+        return scheme.lower() == "bearer" and hmac.compare_digest(
+            value.strip().encode("utf-8"), (self.token or "").encode("utf-8")
+        )
+
+    def _send_response(
+        self,
+        code: int,
+        content_type: str,
+        body: str,
+        extra_headers: dict[str, str] | None = None,
+    ) -> None:
         payload = body.encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
+        )
+        for name, value in (extra_headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(payload)
 
@@ -94,11 +126,28 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return
 
 
-def run_server(host: str = "127.0.0.1", port: int = 8080, db_path: str = "uptime.db") -> None:
-    """Start the HTTP server."""
+def _is_loopback(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def run_server(
+    host: str = "127.0.0.1",
+    port: int = 8080,
+    db_path: str = "uptime.db",
+    token: str | None = None,
+) -> None:
+    """Start the HTTP server. Non-loopback binds require a bearer token."""
     if not (1 <= int(port) <= 65535):
         raise ValueError(f"Invalid port: {port}")
+    if not token and not _is_loopback(host):
+        raise ValueError("UPTIME_DASHBOARD_TOKEN is required for non-loopback binds.")
     DashboardHandler.db_path = db_path
+    DashboardHandler.token = token or None
     server = HTTPServer((host, int(port)), DashboardHandler)
     print(f"Serving dashboard on http://{host}:{port} (DB: {db_path})")
     try:
@@ -113,4 +162,5 @@ if __name__ == "__main__":
     db = os.environ.get("UPTIME_DB_PATH", "uptime.db")
     host = os.environ.get("UPTIME_HOST", "127.0.0.1")
     port = int(os.environ.get("UPTIME_PORT", "8080"))
-    run_server(host=host, port=port, db_path=db)
+    token = os.environ.get("UPTIME_DASHBOARD_TOKEN") or None
+    run_server(host=host, port=port, db_path=db, token=token)
