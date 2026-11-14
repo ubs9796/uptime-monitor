@@ -1,0 +1,46 @@
+import json
+import os
+import urllib.error
+import urllib.request
+
+from checker import validate_url
+
+
+def format_alert_message(
+    client_name: str,
+    url: str,
+    is_up: bool,
+    status_code: int,
+    ssl_days: int | None,
+    ssl_warn_days: int = 14,
+) -> str:
+    """Build a concise alert string for downtime, recovery, or SSL expiry."""
+    state = "RECOVERED" if is_up else "DOWN"
+    lines = [
+        f"[{state}] {client_name}",
+        f"URL: {url}",
+        f"HTTP Status: {status_code}",
+    ]
+    if ssl_days is not None and ssl_days <= ssl_warn_days:
+        lines.append(f"SSL Warning: {ssl_days} days left")
+    return "\n".join(lines)
+
+
+def send_webhook_alert(message: str, webhook_url: str | None = None, timeout_sec: float = 5.0) -> bool:
+    """Post JSON alert payload to a free Telegram/Discord/custom webhook from env."""
+    target = webhook_url or os.environ.get("ALERT_WEBHOOK_URL", "")
+    if not target.strip():
+        return False
+    clean_url = validate_url(target)
+    payload = json.dumps({"text": message}).encode("utf-8")
+    req = urllib.request.Request(
+        clean_url,
+        data=payload,
+        headers={"Content-Type": "application/json", "User-Agent": "bsloopstudio-uptime/1.0"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+            return 200 <= resp.getcode() < 300
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return False
