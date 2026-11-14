@@ -14,7 +14,7 @@ A lightweight, zero-dependency Python 3 tool that monitors HTTP availability and
     python3 runner.py list
 
 ## Testing
-    pythest -v # or: pytest -v
+    pytest -v # or: pytest -v
 
 ## License
 MIT License - Copyright (c) 2026 Bharath Simha (bsloopstudio)
