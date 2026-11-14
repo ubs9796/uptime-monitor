@@ -9,6 +9,6 @@
     "ssl_days": 85,
     "audited_at": "2026-11-14",
     "trial_expires": "2026-11-24",
-    "active": false
+    "active": true
   }
 ]
