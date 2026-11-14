@@ -5,6 +5,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 from checker import check_http_status, get_ssl_days_left, validate_url
+from notifier import send_telegram_alert
 
 LEADS_FILE = "leads.json"
 SITES_FILE = "sites.json"
@@ -22,10 +23,11 @@ def save_json(path: str, data: list[dict]) -> None:
         json.dump(data, f, indent=2)
 
 
-def git_sync(msg: str) -> None:
+def git_sync(msg: str) -> bool:
     subprocess.run(["git", "add", LEADS_FILE, SITES_FILE], check=False)
     subprocess.run(["git", "commit", "-m", msg], check=False)
-    subprocess.run(["git", "push", "origin", "main"], check=False)
+    res = subprocess.run(["git", "push", "origin", "main"], check=False)
+    return res.returncode == 0
 
 
 def main() -> None:
@@ -62,13 +64,27 @@ def main() -> None:
     })
     save_json(LEADS_FILE, leads)
 
+    sites = load_json(SITES_FILE)
     if activate:
-        sites = [x for x in load_json(SITES_FILE) if x.get("url") != url]
+        sites = [x for x in sites if x.get("url") != url]
         sites.append({"client_name": name, "url": url, "trial_expires": expires})
         save_json(SITES_FILE, sites)
 
-    git_sync(f"chore(leads): audit {name}")
-    print(f"{name} | HTTP: {http_code} | SSL: {ssl_days}d | Trial ends: {expires} | Active: {activate}")
+    synced = git_sync(f"chore(leads): {'activate' if activate else 'audit'} {name}")
+    total_audited = len(leads)
+    total_active = len(sites)
+
+    mode = "ACTIVATED (10-Day Trial)" if activate else "AUDITED (Lead)"
+    tg_msg = (
+        f"[{mode}] {name}\n"
+        f"URL: {url}\n"
+        f"HTTP: {http_code} | SSL: {ssl_days}d\n"
+        f"Trial Ends: {expires}\n"
+        f"GitHub Sync: {'OK' if synced else 'FAILED'}\n"
+        f"Counts -> Audited: {total_audited} | Active Sites: {total_active}"
+    )
+    tg_sent = send_telegram_alert(tg_msg)
+    print(f"{mode} | {name} | HTTP: {http_code} | SSL: {ssl_days}d | Sync: {synced} | TG: {tg_sent} | Audited: {total_audited} | Active: {total_active}")
 
 
 if __name__ == "__main__":
