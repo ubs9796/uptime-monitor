@@ -1,12 +1,14 @@
 import argparse
+import json
 import os
 import socket
 import ssl
+import sys
 import urllib.parse
 
 from checker import check_http_status, get_ssl_days_left, is_internet_online
 from notifier import format_alert_message, send_webhook_alert
-from storage import add_site, connect_db, init_db, list_sites, update_site_state
+from storage import add_site, connect_db, init_db, list_sites, remove_site, update_site_state
 
 
 def extract_hostname(url: str) -> str:
@@ -90,7 +92,11 @@ def build_parser() -> argparse.ArgumentParser:
     add_cmd.add_argument("client_name", help="Customer or clinic name")
     add_cmd.add_argument("url", help="Full http:// or https:// URL")
 
-    sub.add_parser("list", help="List all monitored websites and last status")
+    remove_cmd = sub.add_parser("remove", help="Stop monitoring a website")
+    remove_cmd.add_argument("url", help="Exact URL that was added")
+
+    list_cmd = sub.add_parser("list", help="List all monitored websites and last status")
+    list_cmd.add_argument("--json", action="store_true", help="Output sites as JSON")
 
     check_cmd = sub.add_parser("check", help="Run one check cycle across all sites")
     check_cmd.add_argument("--ssl-warn-days", type=int, default=14, help="Days before SSL expiry to alert")
@@ -110,17 +116,34 @@ def main(argv: list[str] | None = None) -> int:
             conn.close()
         return 0
 
+    if args.command == "remove":
+        conn = connect_db(args.db)
+        init_db(conn)
+        try:
+            if not remove_site(conn, args.url):
+                print(f"Site not found: {args.url}", file=sys.stderr)
+                return 1
+            print(f"Removed site: {args.url}")
+        finally:
+            conn.close()
+        return 0
+
     if args.command == "list":
         conn = connect_db(args.db)
         init_db(conn)
         try:
             sites = list_sites(conn)
+            if args.json:
+                print(json.dumps(sites, indent=2))
+                return 0
             if not sites:
                 print("No sites configured.")
                 return 0
             for s in sites:
                 state = "NEW" if s["last_is_up"] is None else ("UP" if s["last_is_up"] == 1 else "DOWN")
-                print(f"[{s['id']}] {s['client_name']} | {s['url']} | {state} ({s['last_status_code']}) | SSL: {s['last_ssl_days']}d")
+                status_code = "-" if s["last_status_code"] is None else s["last_status_code"]
+                ssl_days = "-" if s["last_ssl_days"] is None else f"{s['last_ssl_days']}d"
+                print(f"[{s['id']}] {s['client_name']} | {s['url']} | {state} ({status_code}) | SSL: {ssl_days}")
         finally:
             conn.close()
         return 0
