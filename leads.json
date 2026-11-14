@@ -10,5 +10,17 @@
     "audited_at": "2026-11-14",
     "trial_expires": "2026-11-24",
     "active": true
+  },
+  {
+    "client_name": "Academic Heights Miyapur",
+    "url": "https://academicheightshyd.com/admissions/",
+    "http_code": [
+      true,
+      403
+    ],
+    "ssl_days": 76,
+    "audited_at": "2026-11-14",
+    "trial_expires": "2026-11-24",
+    "active": false
   }
 ]
