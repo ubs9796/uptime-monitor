@@ -1,0 +1,60 @@
+name: Uptime & SSL Monitor
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  check-sites:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restore SQLite state cache
+        id: db-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            uptime.db
+            uptime.db-wal
+            uptime.db-shm
+          key: uptime-db-${{ github.run_id }}
+          restore-keys: |
+            uptime-db-
+
+      - name: Seed sites from sites.json
+        run: |
+          python3 - << 'PY'
+          import json
+          import sqlite3
+          from storage import add_site, connect_db, init_db
+
+          conn = connect_db("uptime.db")
+          init_db(conn)
+          with open("sites.json", "r", encoding="utf-8") as f:
+              sites = json.load(f)
+          for item in sites:
+              try:
+                  add_site(conn, item["client_name"], item["url"])
+                  print(f"Seeded: {item['client_name']}")
+              except sqlite3.IntegrityError:
+                  pass
+          conn.close()
+          PY
+
+      - name: Run uptime and SSL checks
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+        run: |
+          python3 runner.py check --ssl-warn-days 14
+          python3 runner.py list

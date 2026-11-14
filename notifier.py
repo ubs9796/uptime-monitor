@@ -26,8 +26,38 @@ def format_alert_message(
     return "\n".join(lines)
 
 
+def send_telegram_alert(
+    message: str,
+    bot_token: str | None = None,
+    chat_id: str | None = None,
+    timeout_sec: float = 5.0,
+) -> bool:
+    """Send alert message via Telegram Bot API using env credentials."""
+    token = (bot_token or os.environ.get("TELEGRAM_BOT_TOKEN", "")).strip()
+    target_chat = (chat_id or os.environ.get("TELEGRAM_CHAT_ID", "")).strip()
+    if not token or not target_chat:
+        return False
+
+    api_url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = json.dumps({"chat_id": target_chat, "text": message}).encode("utf-8")
+    req = urllib.request.Request(
+        api_url,
+        data=payload,
+        headers={"Content-Type": "application/json", "User-Agent": "bsloopstudio-uptime/1.0"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+            return 200 <= resp.getcode() < 300
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return False
+
+
 def send_webhook_alert(message: str, webhook_url: str | None = None, timeout_sec: float = 5.0) -> bool:
-    """Post JSON alert payload to a free Telegram/Discord/custom webhook from env."""
+    """Send alert via Telegram if configured, otherwise fall back to ALERT_WEBHOOK_URL."""
+    if send_telegram_alert(message, timeout_sec=timeout_sec):
+        return True
+
     target = webhook_url or os.environ.get("ALERT_WEBHOOK_URL", "")
     if not target.strip():
         return False
