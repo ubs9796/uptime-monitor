@@ -1,6 +1,6 @@
 # Website Uptime & SSL Expiry Monitor
 
-Alightweight, zero-dependency Python 3 tool that monitors HTTP availability and TLS/SSL certificate expiry across configured websites, stores state in SQLITE (WAL mode), and sends instant alerts via Telegram Bot or webhooks.
+A lightweight, zero-dependency Python 3 tool that monitors HTTP availability and TLS/SSL certificate expiry across configured websites, stores state in SQLITE (WAL mode), and sends instant alerts via Telegram Bot or webhooks.
 
 ## Features
 - Zero external runtime dependencies: Built purely with Python 3 standard libraries (<60 MB RAM).
