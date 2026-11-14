@@ -1,3 +1,4 @@
+import json
 from unittest.mock import patch
 
 from runner import main, run_check_cycle
@@ -42,3 +43,22 @@ def test_cli_add_and_list_commands(tmp_path, capsys) -> None:
     assert rc_list == 0
     assert "Added site #1: Test Shop" in captured
     assert "Test Shop | https://shop.example.com | NEW" in captured
+
+
+def test_cli_remove_and_list_json(tmp_path, capsys) -> None:
+    db_file = str(tmp_path / "cli_json.db")
+    assert main(["--db", db_file, "add", "Test Shop", "https://shop.example.com"]) == 0
+    capsys.readouterr()
+
+    assert main(["--db", db_file, "list", "--json"]) == 0
+    sites = json.loads(capsys.readouterr().out)
+    assert [site["client_name"] for site in sites] == ["Test Shop"]
+
+    assert main(["--db", db_file, "remove", "https://shop.example.com"]) == 0
+    assert "Removed site" in capsys.readouterr().out
+
+    assert main(["--db", db_file, "list", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == []
+
+    assert main(["--db", db_file, "remove", "https://missing.example.com"]) == 1
+    assert "Site not found" in capsys.readouterr().err
